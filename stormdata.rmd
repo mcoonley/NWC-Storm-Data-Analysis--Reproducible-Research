@@ -1,0 +1,228 @@
+---
+title: "Storm Data Analysis"
+author: "Mari Coonley"
+date: "January 22, 2017"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Synopsis
+
+The National Weather Service collects data regarding major storms and weather events beginning in the year 1950.  We have been tasked with summarizing the data from 1950 through November 2011 to determine which type of events are the most harmful with respect to population health as well as have the greatest economic consequences, both across the entire United States.  
+
+The top five event types that are most harmful to population health across the United States, when including both fatalities and injuries include (in rank order): tornadoes, excessive heat, thunderstorm winds, flood, and lightening. Looking at fatalities and injuries separately, the rankings fluctuate slightly, but the top five event types remains the same. 
+
+In regards to economic consequences related to the top five weather events across the United States, the  Total Economic Consequences and Total Property Damage are almost identical, with exception of the 5th ranking.  In declining order, they include: Flood, hurricane/typhoon, tornado, storm surge and for total damages, hail, whereas property damage, flash flood.  On the other hand, for Total Crop Damages, the number one ranking is drought, followed by flood, river flood, ice storm and hail. 
+
+## Data Processing
+
+Step 1: Load the data and necessary libraries. 
+```{r load libraries, results = "hide"}
+library(plyr)
+library(dplyr)
+```
+
+```{r load data, cache = TRUE}
+if(!file.exists("stormdata")){
+  dir.create("stormdata")
+}
+fileUrl<-"https://d396qusza40orc.cloudfront.net/repdata%2Fdata%2FStormData.csv.bz2"
+download.file(fileUrl, "stormdata.csv")
+stormdata<-read.csv("stormdata.csv")
+glimpse(stormdata)
+```
+
+Step 2: Determine which variable address the assignment criteria. Both questions ask for information 'Across the United States' which eliminates the need to subset or sort information by state, region or county.  Therefore, none of those variables are necessary. Both also ask about types of events, so the variable EVTYPE is necessary for both. Neither asks for information regarding parameters of individual events, times, latitude/longitude, magnitude, etc, thereby eliminating the need for any of those variables as well.  
+
+_Question 1_: which types of events are most harmful with         respect to population health? The variables pertaining to         public health include : According to the National Weather         Service Storm Data Documentation (NWCSSDD) - FATALITIES,          and INJURIES.  This allows for a truncated dataset that           includes only 3 variables - EVTYPE, FATALITIES, and               INJURIES. 
+
+_Question 2_: which types of events have the greatest              economic consequences?  Again, according to the NWCSSDD the       categories associated with cost(economic consequences) are        PROPDMG, PROPDMGEXP, CROPDMG, CROPDMGEXP.  This again allows      for a truncated dataset that only includes 5 variables -          EVTYPE, PROPDMG, PROPDMGEXP, CROPDMG, CROPDMGEXP. 
+
+Step 3: Create two data sets using the variables selected in Step 2, one addressing public health and one addressing economic consequences to expedite data processing during analysis.
+
+```{r datasets}
+  ## Public health related data
+stormdataHealth<-stormdata[, c("EVTYPE", "FATALITIES", "INJURIES")]
+str(stormdataHealth)
+  ## Economic consequences related data
+stormdataCost<-stormdata[ ,c("EVTYPE", "PROPDMG", "PROPDMGEXP", "CROPDMG", "CROPDMGEXP")]
+str(stormdataCost)
+```
+ 
+The _stormdataHealth_ dataset is ready for analysis, however the _stormdataCost_ dataset requires more processing. The elements of the _PROPDMGEXP_ AND _CROPDMGEXP_ are multipliers for the numeric amounts of the _PROPDMG_ AND _CROPDMG_ variables, respectively.  Reviewing these, note there are several different multipliers in each variable.
+
+```{r multipliers}
+unique(stormdataCost$PROPDMGEXP)
+unique(stormdataCost$CROPDMGEXP)
+```
+Notice there is repetition between the two variables.   There is no direct explanation as to what the numbers represent, however it is fairly safe to assume they represent exponential multiplicatives.  For example, "6" represents ten raised to the power of 6 (10^6) or millions.  This exponential should then be multiplied with the corresponding figure in the _PROPDMG_ OR _CROPDMG_ variable.  This assumption is based on the given that according to the NWCSSDD the letters represent the following: "H" or "h" represent hundreds; "K" or "k" represent thousand; "M" or "m" represent millions; and "B" or "b" represent billions. 
+These figures need to be converted to a consistent format in order to use them as multipliers to calculate the economic consequences of each event.  
+
+Step 1: create new variables which converts factors in _PROPDMGEXP_ and _CROPDMGEXP_ to characters.
+
+```{r factor conv}
+stormdataCost$PROPDMGEXP1<-as.character(stormdataCost$PROPDMGEXP)
+stormdataCost$CROPDMGEXP1<-as.character(stormdataCost$CROPDMGEXP)
+str(stormdataCost)
+```
+Step 2: convert the letters, "H", "h", "K", "k", "M", "m" and "B" to their corresponding exponents, 2,3,6 & 9, respectively, for both property and crop damage exponents. For the unknown factors, "", "=", "+", "-" and "?", just replace with zero for simplicity.
+```{r exp conv}
+ ## property damages
+stormdataCost$PROPDMGEXP1[stormdataCost$PROPDMGEXP1 %in% c("B")]="9"
+stormdataCost$PROPDMGEXP1[stormdataCost$PROPDMGEXP1 %in% c("","=", "+", "-","?")]="0"
+stormdataCost$PROPDMGEXP1[stormdataCost$PROPDMGEXP1 %in% c("H", "h")]="2"
+stormdataCost$PROPDMGEXP1[stormdataCost$PROPDMGEXP1 %in% c("K", "k")]="3"
+stormdataCost$PROPDMGEXP1[stormdataCost$PROPDMGEXP1 %in% c("M", "m")]="6"
+stormdataCost$PROPDMGEXP1[stormdataCost$PROPDMGEXP1 %in% c("0")]="3"
+
+ ## crop damages
+stormdataCost$CROPDMGEXP1[stormdataCost$CROPDMGEXP1 %in% c("?", "")]="0"
+stormdataCost$CROPDMGEXP1[stormdataCost$CROPDMGEXP1 %in% c("B")]="9"
+stormdataCost$CROPDMGEXP1[stormdataCost$CROPDMGEXP1 %in% c("M","m")]="6"
+stormdataCost$CROPDMGEXP1[stormdataCost$CROPDMGEXP1 %in% c("K","k")] = "3"
+str(stormdataCost)
+```
+Step 3:  Calculate the total property and crop damage individually, then combine them for a cumulative total.
+```{r calc tots}
+ ## total property damage
+stormdataCost$TotPropDmg<-stormdataCost$PROPDMG*10^as.numeric(stormdataCost$PROPDMGEXP1)
+ ## total crop damage
+stormdataCost$TotCropDmg<-stormdataCost$CROPDMG*10^as.numeric(stormdataCost$CROPDMGEXP1)
+ ## total cummulative damage
+stormdataCost$totalDamage<-stormdataCost$TotPropDmg + stormdataCost$TotCropDmg
+str(stormdataCost)
+```
+
+
+
+###Analysis
+
+**_Question 1_** 
+event types most harmful to population health:
+
+A truncated dataset has already been created, _stormdataHealth_, it now needs to be summarized by EVTYPE, or event type.  
+
+```{r health summaries, cache = TRUE}
+totHealth<- stormdataHealth %>% group_by(EVTYPE) %>%
+  summarise_each(funs(sum))
+str(totHealth)
+```
+
+Next, add a new variable to represent the combined total of fatalities and injuries.
+```{r total fatalities and injuries}
+totHealth$totFI<-totHealth$FATALITIES+totHealth$INJURIES
+str(totHealth)
+```
+Rearrange the dataset to sort our total fatalities and injuries from highest to lowest numbers to determine those events most harmful to the population's health.
+
+```{r reorder}
+totHealth1<-arrange(totHealth, desc(totFI))
+head(totHealth1)
+```
+After reviewing _totHealth1_, it is obvious that only the top 5 are significant in relation to overall total fatalities and injuries. 
+
+```{r smaller dataset}
+totHealth1<-totHealth1 [1:5,]
+totHealth1
+```
+It would also be interesting to review the order of event types in relation to fatalities and injuries separately, to see which comprises more occurrences per event type, fatalities or injuries.
+Therefore, re-order the dataset, _totHealth1_ by each fatalities and injuries, rather than the total combined.  See Figure 1 under results for graphics. 
+```{r arrange by fat & inj}
+arrange(totHealth1, desc(FATALITIES))
+arrange(totHealth1, desc(INJURIES))
+```
+The number one event type to harm to population health is consistently tornadoes, but the other event types fluctuate some in the individual categories. 
+
+**_Question 2_** 
+Event types with greatest economic consequences:
+
+Because total figures for property damage, crop damage and cumulative damage were calculated during data processing, create a new dataset including only those variables as well as _EVTYPE_.
+
+```{r new dataset}
+stormdataCost1<-stormdataCost[c("EVTYPE", "TotPropDmg", "TotCropDmg", "totalDamage")]
+str(stormdataCost1)
+```
+
+Next, summarize the new dataset, _stormdataCost1_ by event type.
+
+```{r cost summary}
+totCost<-stormdataCost1%>%group_by(EVTYPE)%>% summarise_each(funs(sum))
+str(totCost)
+```
+
+Rearrange the dataset from highest to lowest dollar amounts to determine which events with the greatest economic consequences.
+
+```{r arrange cost}
+totCost<-arrange(totCost, desc(totalDamage))
+totCost1<-totCost[1:5,]
+totCost1
+```
+As with population health, it is interesting to look at how the top five event types vary contingent on only property and crop damages.
+
+```{r prop v crop costs}
+ ## property damages
+totCost2<-arrange(totCost, desc(TotPropDmg))
+totCost2<-totCost2[1:5,]
+totCost2
+ ## crop damages
+totCost3<-arrange(totCost, desc(TotCropDmg))
+totCost3<-totCost3[1:5,]
+totCost3
+```
+While there are almost no differences in the top five event types total combined damages and total property damages, there is a major difference with total crop damages.  Drought is not included in the top five (or ten either) for either property or total damages, yet it is the number one event type causing the most economic consequences for crops. See Figure 2 for graphics. 
+
+## Results
+
+###Figure 1
+Below are barplots of the top five event types that are most harmful to population health across the United States.  Notice that the allocation is slightly different for fatalities in respect to both the combined numbers and injuries by themselves.  There are also much less fatalities than injuries, as noted in the bar plots with counts in the 100's for fatalities as opposed to counts in the 1000's for injuries.  
+
+```{r health graphs, fig.width = 10}
+par(mfrow = c(1,3))
+bp<-barplot(totHealth1$totFI/1000, 
+    main = "Total Combined Fatalities and Injuries", 
+    xlab = "", ylab = "Total (in thousands)", col = "red",
+    ylim = c(1, 100), names.arg = totHealth1$EVTYPE, las=2)
+text(bp, 0, totHealth1$totFI, cex = 1, pos = 3 )
+bp1<-barplot(totHealth1$FATALITIES/100, 
+            main = "Tota Fatalities", 
+            xlab = "", ylab = "Total (in hundreds)", 
+            col = "orange",
+            ylim = c(1, 60), names.arg = totHealth1$EVTYPE, 
+            las=2)
+text(bp1, 0, totHealth1$FATALITIES, cex = 1, pos = 3 )
+bp2<-barplot(totHealth1$INJURIES/1000,
+             main = "Total Injuries", xlab = "",
+             ylab = "Total (in thoursands)" , col = "yellow",
+             ylim = c(1, 100), names.arg = totHealth1$EVTYPE, 
+             las=2)
+text(bp2, 0, totHealth1$INJURIES, cex = 1, pos = 3 )
+```
+
+
+### Figure 2
+Below are the barplots of the top five event types that subject the most severe economic consequences across the United States, based on dollar amounts.  Because of the large dollar amounts (combined flood damages exceed $150 BILLION) for simplicity of the graphs, the total figures for both Total Consequences and Total Property Damages have been divided by ten million dollars, or in the case of Crop Damage, one million dollars.  
+
+
+```{r cost graphs, fig.width = 10}
+par(mfrow = c(1,3))
+cp<-barplot(totCost1$totalDamage/10^7, 
+  main = "Total Economic Consequences($$)", xlab = "", 
+  ylab = "Total (in 10 millions)", ylim=c(1, 17000), 
+  col = "darkseagreen3", names.arg = totCost1$EVTYPE, las = 2)
+text(cp, 0, round(totCost1$totalDamage/10^7,2), cex = 1, pos = 3)
+cp1<-barplot(totCost2$TotPropDmg/10^7, 
+  main = "Total Property Damage($$)", xlab = "", 
+  ylab = "Total (in 10 millions)", ylim=c(1, 17000), 
+  col = "lightsteelblue3", names.arg = totCost2$EVTYPE, las = 2)
+text(cp1, 0, round(totCost2$TotPropDmg/10^7,2), cex = 1, pos = 3)
+cp2<-barplot(totCost3$TotCropDmg/10^6, 
+  main = "Total Crop Damage($$)", xlab = "", 
+  ylab = "Total (in millions)", ylim=c(1, 15000), 
+  col = "turquoise3", names.arg = totCost3$EVTYPE, las = 2)
+text(cp2, 0, round(totCost3$TotCropDmg/10^6,2), cex = 1, pos = 3)
+```
+
+Notice, with the exception of position five, Total Economic Consequences and Total Property Damages have the same rankings and are both figures in tens of millions of dollars.  However, while Total Crop Damage in only in millions of dollars, Flood is bumped out of first position by drought.  This is completely reasonable considering crops must have precipitation and/or irrigation to survive, drought conditions greatly hinder both those requirements hence causing loss of crops.  
